@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "manus_antigravity_bridge": {
+      "command": "python3",
+      "args": ["/path/to/mcp_server.py"],
+      "env": {
+        "CHAT_BRIDGE_URL": "https://your-manus-app.manus.space/api/trpc",
+        "MANUS_BRIDGE_API_KEY": "your-api-key-here",
+        "CHAT_SESSION_ID": "your-session-id-here"
+      }
+    }
+  }
+}
