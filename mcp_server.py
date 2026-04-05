@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 MCP Server for Manus-Antigravity Chat Bridge
-This server allows Antigravity AI to communicate with the chat bridge
+MODIFIED BY LEWIS (ANTIGRAVITY): Fixed JSON-RPC handshake and initialize handler for modern MCP clients.
 """
 
 import json
@@ -12,16 +12,20 @@ from typing import Any
 from datetime import datetime
 
 # Configuration
-CHAT_BRIDGE_URL = os.getenv("CHAT_BRIDGE_URL", "http://localhost:3000/api/trpc")
-API_KEY = os.getenv("MANUS_BRIDGE_API_KEY", "your-api-key-here")
-SESSION_ID = os.getenv("CHAT_SESSION_ID", "default-session")
+CHAT_BRIDGE_URL = os.getenv("CHAT_BRIDGE_URL", "https://3000-isjegl2hq9owfxq5ebes0-5eb58adb.sg1.manus.computer/api/trpc")
+API_KEY = os.getenv("MANUS_BRIDGE_API_KEY", "e80118a1555db7ee07e3a5ec710423da069521addb85392607e3cceebd013e89")
+SESSION_ID = os.getenv("CHAT_SESSION_ID", "session-rPAd6r3RvZ3c1xuk2yGHd")
 
 
 class MCPServer:
     def __init__(self):
         self.session_id = SESSION_ID
         self.api_key = API_KEY
-        self.bridge_url = CHAT_BRIDGE_URL
+        # Ensure bridge_url ends with /api/trpc
+        url = CHAT_BRIDGE_URL.rstrip('/')
+        if not url.endswith('/api/trpc'):
+            url = f"{url}/api/trpc"
+        self.bridge_url = url
 
     def send_message(self, content: str) -> dict:
         """Send a message from Antigravity AI to the chat bridge"""
@@ -86,9 +90,25 @@ class MCPServer:
         """Handle incoming MCP requests"""
         method = request.get("method")
         params = request.get("params", {})
+        request_id = request.get("id")
 
-        if method == "resources/list":
-            return {
+        result = None
+
+        if method == "initialize":
+            result = {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "resources": {},
+                    "tools": {}
+                },
+                "serverInfo": {
+                    "name": "manus-antigravity-bridge",
+                    "version": "1.0.0"
+                }
+            }
+        
+        elif method == "resources/list":
+            result = {
                 "resources": [
                     {
                         "uri": "chat://messages",
@@ -108,9 +128,9 @@ class MCPServer:
         elif method == "resources/read":
             uri = params.get("uri")
             if uri == "chat://messages":
-                return {"contents": [{"uri": uri, "mimeType": "application/json", "text": json.dumps(self.get_messages())}]}
+                result = {"contents": [{"uri": uri, "mimeType": "application/json", "text": json.dumps(self.get_messages())}]}
             elif uri == "chat://status":
-                return {
+                result = {
                     "contents": [
                         {
                             "uri": uri,
@@ -127,7 +147,7 @@ class MCPServer:
                 }
 
         elif method == "tools/list":
-            return {
+            result = {
                 "tools": [
                     {
                         "name": "send_message",
@@ -146,12 +166,18 @@ class MCPServer:
                     {
                         "name": "get_messages",
                         "description": "Get all messages from the current chat session",
-                        "inputSchema": {"type": "object", "properties": {}},
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
+                        },
                     },
                     {
                         "name": "get_session_info",
                         "description": "Get current session information",
-                        "inputSchema": {"type": "object", "properties": {}},
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
+                        },
                     },
                 ]
             }
@@ -161,15 +187,15 @@ class MCPServer:
             tool_input = params.get("input", {})
 
             if tool_name == "send_message":
-                result = self.send_message(tool_input.get("content", ""))
-                return {"content": [{"type": "text", "text": json.dumps(result)}]}
+                res = self.send_message(tool_input.get("content", ""))
+                result = {"content": [{"type": "text", "text": json.dumps(res)}]}
 
             elif tool_name == "get_messages":
-                result = self.get_messages()
-                return {"content": [{"type": "text", "text": json.dumps(result)}]}
+                res = self.get_messages()
+                result = {"content": [{"type": "text", "text": json.dumps(res)}]}
 
             elif tool_name == "get_session_info":
-                return {
+                result = {
                     "content": [
                         {
                             "type": "text",
@@ -184,7 +210,16 @@ class MCPServer:
                     ]
                 }
 
-        return {"error": f"Unknown method: {method}"}
+        if result is not None:
+            return {"jsonrpc": "2.0", "id": request_id, "result": result}
+        elif request_id is not None:
+            return {
+                "jsonrpc": "2.0", 
+                "id": request_id, 
+                "error": {"code": -32601, "message": f"Method not found: {method}"}
+            }
+        else:
+            return None
 
 
 def main():
@@ -197,22 +232,18 @@ def main():
     print(f"[MCP Server] Session ID: {server.session_id}", file=sys.stderr)
 
     try:
-        while True:
-            # Read incoming request from stdin
-            line = sys.stdin.readline()
-            if not line:
-                break
-
+        for line in sys.stdin:
             try:
                 request = json.loads(line)
                 response = server.handle_request(request)
-                print(json.dumps(response))
-                sys.stdout.flush()
+                if response is not None:
+                    print(json.dumps(response))
+                    sys.stdout.flush()
             except json.JSONDecodeError as e:
-                print(json.dumps({"error": f"Invalid JSON: {str(e)}"}))
+                print(json.dumps({"jsonrpc": "2.0", "error": {"code": -32700, "message": f"Parse error: {str(e)}"}}))
                 sys.stdout.flush()
             except Exception as e:
-                print(json.dumps({"error": f"Server error: {str(e)}"}))
+                print(json.dumps({"jsonrpc": "2.0", "error": {"code": -32603, "message": f"Internal error: {str(e)}"}}))
                 sys.stdout.flush()
     except KeyboardInterrupt:
         server.update_mcp_status(False)
